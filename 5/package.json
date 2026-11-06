@@ -1,0 +1,24 @@
+{
+  "name": "ellie-life-piura",
+  "version": "1.0.0",
+  "description": "Ellie Life Enterprise — Sistema de Seguridad, Evacuación y Alertas Comunitarias para Piura ante el Fenómeno El Niño",
+  "main": "server.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node tests/test-suite.mjs",
+    "demo": "node tests/test-suite.mjs"
+  },
+  "keywords": [
+    "piura",
+    "el-nino",
+    "croquis-evacuacion",
+    "deepseek",
+    "supabase",
+    "n8n",
+    "seguridad-ciudadana",
+    "resiliencia"
+  ],
+  "author": "Fabrizzio Pelaez - Hackathon UPN 2026",
+  "license": "MIT"
+}

@@ -1,0 +1,60 @@
+{
+  "name": "Ellie Life Enterprise — Seguridad y Evacuación Piura",
+  "short_name": "Ellie Piura",
+  "description": "Herramienta comunitaria de preparación familiar, croquis de evacuación y alertas tempranas ante inundaciones del Fenómeno El Niño en Piura.",
+  "start_url": "/?source=pwa",
+  "display": "standalone",
+  "background_color": "#F5F3FF",
+  "theme_color": "#4B36F2",
+  "orientation": "portrait-primary",
+  "categories": ["weather", "social", "utilities"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Ver Croquis Seguro",
+      "short_name": "Croquis",
+      "description": "Rutas de evacuación y zonas seguras de Piura",
+      "url": "/#croquis",
+      "icons": [{ "src": "/assets/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Reportar Incidente",
+      "short_name": "Reportar",
+      "description": "Reportar aniego, crecida o necesidad de ayuda",
+      "url": "/#reportar",
+      "icons": [{ "src": "/assets/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Llamar Emergencia",
+      "short_name": "Contactos",
+      "description": "Contactos oficiales de Piura",
+      "url": "/#contactos",
+      "icons": [{ "src": "/assets/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
