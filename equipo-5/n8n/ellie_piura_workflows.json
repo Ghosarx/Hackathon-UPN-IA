@@ -1,0 +1,145 @@
+[
+  {
+    "name": "Ellie Piura - 01 Reporte y clasificación segura",
+    "active": false,
+    "settings": {"executionOrder": "v1"},
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "ellie/piura/report",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "piura-report-webhook",
+        "name": "Entrada reporte ciudadano",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [-900, 0],
+        "webhookId": "ellie-piura-report-v1"
+      },
+      {
+        "parameters": {
+          "jsCode": "const b = $json.body ?? $json;\nconst lat = Number(b.latitude);\nconst lon = Number(b.longitude);\nconst hasLocation = Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;\nconst description = String(b.description ?? '').trim();\nif (!description || description.length < 3) throw new Error('description_required');\nif (b.location_shared === true && !hasLocation) throw new Error('valid_location_required');\nconst text = `${b.type ?? ''} ${description}`.toLowerCase();\nlet level = 'bajo';\nif (/persona.*ayuda|atrapad|aislad|vivienda.*inund|desborde|puente.*colaps|herid/.test(text)) level = 'alto';\nif (/urgente|peligro.*vida|niño.*atrap|adulto.*mayor.*ayuda/.test(text)) level = 'critico';\nconst id = `REP-${Date.now().toString(36).toUpperCase()}`;\nreturn [{json: {\n  public_code: id, type: String(b.type ?? 'otro'), description, district: String(b.district ?? 'Piura'), sector: b.sector ? String(b.sector) : null,\n  latitude: hasLocation && b.location_shared === true ? lat : null, longitude: hasLocation && b.location_shared === true ? lon : null,\n  location_shared: hasLocation && b.location_shared === true, people_needing_help: b.people_needing_help === true,\n  reporter_id: b.reporter_id ?? null, synthetic: b.synthetic === true, source: 'citizen', hazard_level: level,\n  consent_id: b.consent_id ?? null, received_at: new Date().toISOString(),\n  safety_note: 'No publicar ni despachar sin validación humana.'\n}}];"
+        },
+        "id": "normalize-report",
+        "name": "Validar consentimiento y clasificar",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [-650, 0]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.deepseek.com/chat/completions",
+          "sendHeaders": true,
+          "headerParameters": {"parameters": [{"name": "Authorization", "value": "={{ 'Bearer ' + $env.DEEPSEEK_API_KEY }}"}, {"name": "Content-Type", "value": "application/json"}]},
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({model: $env.DEEPSEEK_MODEL || 'deepseek-chat', temperature: 0, messages: [{role:'system', content:'Devuelve SOLO JSON válido con type, sector, confidence, missing, abstained, rationale. No inventes datos. Si falta evidencia, abstained=true y confidence<0.70.'},{role:'user', content: JSON.stringify($json)}]}) }}",
+          "options": {"timeout": 15000}
+        },
+        "id": "deepseek-optional",
+        "name": "DeepSeek opcional (sin alerta)",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [-400, 0],
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "jsCode": "const base = $('Validar consentimiento y clasificar').first().json;\nconst raw = $json;\nlet ai = null;\ntry { ai = raw.choices?.[0]?.message?.content ? JSON.parse(raw.choices[0].message.content) : null; } catch (_) {}\nconst valid = ai && typeof ai.confidence === 'number' && typeof ai.abstained === 'boolean' && Array.isArray(ai.missing);\nconst useAi = valid;\nconst confidence = useAi ? Math.max(0, Math.min(1, ai.confidence)) : null;\nreturn [{json: {...base, ai_used: useAi, ai_provider: useAi ? 'DeepSeek' : null, ai_model: useAi ? ($env.DEEPSEEK_MODEL || 'deepseek-chat') : null, ai_type: useAi ? ai.type : null, ai_sector: useAi ? ai.sector : null, confidence, abstained: useAi ? ai.abstained || confidence < 0.70 : true, missing: useAi ? ai.missing : ['validacion_ia'], rationale: useAi ? ai.rationale : 'Fallback RULES-ONLY: requiere revision humana', evidence_status: useAi ? 'IA_ASISTIDA_PENDIENTE_REVISION' : 'RULES_ONLY_PENDIENTE_REVISION'}}];"
+        },
+        "id": "resolve-ai-fallback",
+        "name": "Resolver IA o fallback RULES-ONLY",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [-150, 0]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $env.SUPABASE_URL + '/rest/v1/incidents' }}",
+          "sendHeaders": true,
+          "headerParameters": {"parameters": [{"name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"}, {"name": "Authorization", "value": "={{ 'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY }}"}, {"name": "Content-Type", "value": "application/json"}, {"name": "Prefer", "value": "return=representation"}]},
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({public_code:$json.public_code, reporter_id:$json.reporter_id, type:$json.ai_type || $json.type, description:$json.description, district:$json.district, sector:$json.ai_sector || $json.sector, location_shared:$json.location_shared, people_needing_help:$json.people_needing_help, synthetic:$json.synthetic, source:$json.source, hazard_level:$json.hazard_level, confidence:$json.confidence, ai_provider:$json.ai_provider, ai_model:$json.ai_model, ai_used:$json.ai_used, status:'recibido', expires_at:new Date(Date.now()+86400000).toISOString()}) }}"
+        },
+        "id": "insert-incident",
+        "name": "Guardar incidente Supabase",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [120, 0]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ok:true, code:$('Resolver IA o fallback RULES-ONLY').first().json.public_code, status:'recibido', hazard_level:$('Resolver IA o fallback RULES-ONLY').first().json.hazard_level, evidence_status:$('Resolver IA o fallback RULES-ONLY').first().json.evidence_status, message:'Reporte recibido. Requiere revision humana; no se ha enviado ninguna alerta.'}) }}",
+          "options": {"responseCode": 202}
+        },
+        "id": "report-response",
+        "name": "Respuesta al ciudadano",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [380, 0]
+      }
+    ],
+    "connections": {
+      "Entrada reporte ciudadano": {"main":[[{"node":"Validar consentimiento y clasificar","type":"main","index":0}]]},
+      "Validar consentimiento y clasificar": {"main":[[{"node":"DeepSeek opcional (sin alerta)","type":"main","index":0}]]},
+      "DeepSeek opcional (sin alerta)": {"main":[[{"node":"Resolver IA o fallback RULES-ONLY","type":"main","index":0}]]},
+      "Resolver IA o fallback RULES-ONLY": {"main":[[{"node":"Guardar incidente Supabase","type":"main","index":0}]]},
+      "Guardar incidente Supabase": {"main":[[{"node":"Respuesta al ciudadano","type":"main","index":0}]]}
+    },
+    "pinData": {},
+    "meta": {"templateCredsSetupCompleted": false},
+    "tags": []
+  },
+  {
+    "name": "Ellie Piura - 02 Aprobación y notificación geográfica",
+    "active": false,
+    "settings": {"executionOrder": "v1"},
+    "nodes": [
+      {
+        "parameters": {"httpMethod":"POST","path":"ellie/piura/moderation/approve","responseMode":"responseNode","options":{}},
+        "id":"moderation-webhook","name":"Aprobación moderador","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[-900,0],"webhookId":"ellie-piura-moderation-v1"
+      },
+      {
+        "parameters": {"jsCode":"const b=$json.body??$json; if(b.decision!=='approve') throw new Error('human_approval_required'); if(!b.alert_id||!b.moderator_id) throw new Error('alert_id_and_moderator_id_required'); if(!b.consent_confirmed) throw new Error('audience_consent_required'); return [{json:{...b,radius_m:Math.min(Number(b.radius_m||2000),2000),approved_at:new Date().toISOString(),title:String(b.title||'Alerta comunitaria Piura'),body:String(b.body||'Información preventiva en revisión. Consulta fuentes oficiales.'),safety_note:'Notificación aprobada por persona; no equivale a declaración oficial.'}}];"},
+        "id":"validate-approval","name":"Validar aprobación humana","type":"n8n-nodes-base.code","typeVersion":2,"position":[-650,0]
+      },
+      {
+        "parameters":{"method":"POST","url":"={{ $env.SUPABASE_URL + '/rest/v1/rpc/find_nearby_subscribers' }}","sendHeaders":true,"headerParameters":{"parameters":[{"name":"apikey","value":"={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"},{"name":"Authorization","value":"={{ 'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY }}"},{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={{ JSON.stringify({p_lat:Number($json.latitude),p_lon:Number($json.longitude),p_radius_m:$json.radius_m}) }}","options":{"timeout":10000}},
+        "id":"nearby-rpc","name":"Buscar suscriptores en radio","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[-380,0]
+      },
+      {
+        "parameters":{"jsCode":"const input=$('Validar aprobación humana').first().json; const rows=Array.isArray($json)?$json:[]; if(!input.latitude||!input.longitude) throw new Error('approved_alert_requires_approx_location'); return rows.filter(r=>r.channel==='push'||r.channel==='sms').map(r=>({json:{alert_id:input.alert_id,subscription_id:r.subscription_id,user_id:r.user_id,channel:r.channel,endpoint:r.endpoint,phone:r.phone,distance_m:Math.round(r.distance_m),title:input.title,body:input.body,expires_at:input.expires_at||new Date(Date.now()+7200000).toISOString(),approved_at:input.approved_at}}));"},
+        "id":"fanout","name":"Preparar entregas consentidas","type":"n8n-nodes-base.code","typeVersion":2,"position":[-120,0]
+      },
+      {
+        "parameters":{"method":"POST","url":"={{ $env.NOTIFICATION_GATEWAY_URL }}","sendHeaders":true,"headerParameters":{"parameters":[{"name":"Authorization","value":"={{ 'Bearer ' + $env.NOTIFICATION_GATEWAY_TOKEN }}"},{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={{ JSON.stringify({channel:$json.channel,endpoint:$json.endpoint,phone:$json.phone,title:$json.title,body:$json.body,metadata:{alert_id:$json.alert_id,distance_m:$json.distance_m,region:'Piura'}}) }}","options":{"timeout":15000}},
+        "id":"send-notification","name":"Enviar push o SMS (gateway configurable)","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[150,0],"continueOnFail":true
+      },
+      {
+        "parameters":{"method":"POST","url":"={{ $env.SUPABASE_URL + '/rest/v1/alert_deliveries' }}","sendHeaders":true,"headerParameters":{"parameters":[{"name":"apikey","value":"={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"},{"name":"Authorization","value":"={{ 'Bearer ' + $env.SUPABASE_SERVICE_ROLE_KEY }}"},{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={{ JSON.stringify({alert_id:$json.alert_id,subscription_id:$json.subscription_id,channel:$json.channel,status:$json.error?'failed':'sent',provider_message_id:$json.message_id||null,sent_at:$json.error?null:new Date().toISOString(),error_message:$json.error?.message||null}) }}","options":{}},
+        "id":"save-delivery","name":"Guardar auditoría de entrega","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[420,0],"continueOnFail":true
+      },
+      {
+        "parameters":{"respondWith":"json","responseBody":"={{ JSON.stringify({ok:true,message:'Aprobación procesada. Solo se notificaron suscripciones con consentimiento dentro del radio configurado.',radius_m:$('Validar aprobación humana').first().json.radius_m}) }}","options":{"responseCode":202}},
+        "id":"moderation-response","name":"Respuesta de moderación","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.1,"position":[680,0]
+      }
+    ],
+    "connections": {
+      "Aprobación moderador":{"main":[[{"node":"Validar aprobación humana","type":"main","index":0}]]},
+      "Validar aprobación humana":{"main":[[{"node":"Buscar suscriptores en radio","type":"main","index":0}]]},
+      "Buscar suscriptores en radio":{"main":[[{"node":"Preparar entregas consentidas","type":"main","index":0}]]},
+      "Preparar entregas consentidas":{"main":[[{"node":"Enviar push o SMS (gateway configurable)","type":"main","index":0}]]},
+      "Enviar push o SMS (gateway configurable)":{"main":[[{"node":"Guardar auditoría de entrega","type":"main","index":0}]]},
+      "Guardar auditoría de entrega":{"main":[[{"node":"Respuesta de moderación","type":"main","index":0}]]}
+    },
+    "pinData": {},
+    "meta": {"templateCredsSetupCompleted": false},
+    "tags": []
+  }
+]
